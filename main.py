@@ -23,6 +23,7 @@ class DayAnalyzeRequest(BaseModel):
     solar_avg: float = 0.0        # W/m2
     prev_meter_val: float = 0.0   # Ghost Meter Start
     date_str: str = ""            # "YYYY-MM-DD"
+    current_coeff: float = 1.05   # <--- NOVÝ VSTUP: Naučený koeficient
 
 class HistoryItem(BaseModel):
     date: str
@@ -125,21 +126,16 @@ def analyze_day(data: DayAnalyzeRequest):
             # Vzorec: W/m2 * 24h * 12m2 * 0.6 * stínění / 1000
             solar_gain_kwh = (data.solar_avg * 24 * 12 * 0.6 * shading_eff) / 1000.0
             
-            # 2. Bilance domu (Ghost Meter)
-            # Spotřeba = (Topení Voda * 1.05 ztráty) + (Base Load Domu - Solární Zisk)
-            # Base load (lednice, wifi, standby...) odhaduji na 8 kWh/den
-            base_load = 8.0 
+           # 2. Bilance domu (Ghost Meter)
+            # Protože máš SAMOSTATNÝ elektroměr pro kotel:
+            # - Base Load domu (lednice atd.) je 0.
+            # - Solární zisk se NEODEČÍTÁ (projevil se už tím, že kotel nesepl).
             
-            heating_consumption = water_kwh * 1.05 
+            # Výpočet: (Energie ve vodě kWh * Účinnost/Ztráty trubek)
+            heating_consumption = water_kwh * data.current_coeff 
             
-            # Pokud solární zisk pokryje base load, odečítáme i od topení (dům se prohřívá)
-            net_house_usage = base_load - solar_gain_kwh
-            
-            daily_total = heating_consumption + net_house_usage
-            
-            # Elektroměr nemůže couvat (pokud nemáš FVE přetoky, ale tady simulujeme odběr)
-            # I když teoreticky solární zisk snižuje potřebu topení, nevrací elektřinu.
-            # Ale v naší bilanci "potřeby" to tak necháme.
+            # Ghost Meter simuluje pouze točení elektroměru kotle
+            daily_total = heating_consumption
             
             simulated_meter += daily_total
 
@@ -149,7 +145,8 @@ def analyze_day(data: DayAnalyzeRequest):
             "off_mins": off_mins,
             "new_meter_val": round(simulated_meter, 2),
             "solar_gain_debug": round(solar_gain_kwh, 2),
-            "note": "Pandas Integral + Solar Physics"
+            "used_coeff_debug": data.current_coeff,
+            "note": "Pandas Integral + Solar Physics + Smart Coeff"
         }
 
     except Exception as e:
@@ -193,3 +190,4 @@ def calculate_coeff(data: CoeffRequest):
 
     except Exception as e:
         return {"coeff": 1.157, "error": str(e)}
+
