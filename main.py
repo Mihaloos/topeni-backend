@@ -64,7 +64,7 @@ class SolarPhysics:
 
 @app.get("/")
 def home():
-    return {"status": "Heating Brain 7.0 - NUMPY FIX + GHOST METER ☀️🧠"}
+    return {"status": "Heating Brain 8.0 - PANDAS 2.2 FIX + GHOST METER ☀️🧠"}
 
 @app.get("/wake-up")
 def wake_up():
@@ -108,15 +108,14 @@ def analyze_day(data: DayAnalyzeRequest):
                 time_deltas = (df.index - df.index[0]).total_seconds() / 3600.0
                 
                 # --- OPRAVA PRO NUMPY 2.0+ ---
-                # Stará verze používala 'trapz', nová používá 'trapezoid'.
-                # Tento blok zjistí, co je k dispozici, a použije to správné.
                 if hasattr(np, "trapezoid"):
                      water_kwh = np.trapezoid(df['power_kw'], x=time_deltas)
                 else:
                      water_kwh = np.trapz(df['power_kw'], x=time_deltas)
             
             # 6. Statistiky časů
-            df_res = df['is_running'].resample('1T').max().fillna(0)
+            # OPRAVA PRO PANDAS 2.2+: '1T' (minute) is deprecated, use '1min'
+            df_res = df['is_running'].resample('1min').max().fillna(0)
             run_mins = int(df_res.sum())
             off_mins = 1440 - run_mins
 
