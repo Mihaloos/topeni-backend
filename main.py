@@ -64,7 +64,7 @@ class SolarPhysics:
 
 @app.get("/")
 def home():
-    return {"status": "Heating Brain 6.0 - INTEGRAL + SOLAR CORE ☀️🧠"}
+    return {"status": "Heating Brain 7.0 - NUMPY FIX + GHOST METER ☀️🧠"}
 
 @app.get("/wake-up")
 def wake_up():
@@ -106,8 +106,14 @@ def analyze_day(data: DayAnalyzeRequest):
             if len(df) > 1:
                 # Vytvoříme časovou osu v hodinách od začátku měření
                 time_deltas = (df.index - df.index[0]).total_seconds() / 3600.0
-                # np.trapz spočítá plochu pod křivkou (kW * h = kWh)
-                water_kwh = np.trapz(df['power_kw'], time_deltas)
+                
+                # --- OPRAVA PRO NUMPY 2.0+ ---
+                # Stará verze používala 'trapz', nová používá 'trapezoid'.
+                # Tento blok zjistí, co je k dispozici, a použije to správné.
+                if hasattr(np, "trapezoid"):
+                     water_kwh = np.trapezoid(df['power_kw'], x=time_deltas)
+                else:
+                     water_kwh = np.trapz(df['power_kw'], x=time_deltas)
             
             # 6. Statistiky časů
             df_res = df['is_running'].resample('1T').max().fillna(0)
@@ -190,4 +196,3 @@ def calculate_coeff(data: CoeffRequest):
 
     except Exception as e:
         return {"coeff": 1.157, "error": str(e)}
-
