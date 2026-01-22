@@ -50,7 +50,7 @@ def analyze_day(data: LogInput):
 
         # Výpočty
         df_res['delta'] = (df_res['sup'] - df_res['ret']).clip(lower=0)
-        df_res['is_running'] = (df_res['delta'] > 0.4) & (df_res['sup'] > 25)
+        df_res['is_running'] = (df_res['delta'] > 0.4) & (df_res['sup'] > 20)
         
         # Výkon (kW) = (Průtok * Delta * 4186) / 60000 ... zjednodušeně / 14.3
         df_res['power'] = 0.0
@@ -97,3 +97,4 @@ def calc_coeff(data: HistoryInput):
         return {"coeff": round(safe, 3), "msg": "OK"}
     except Exception as e:
         return {"coeff": 1.157, "msg": str(e)}
+
