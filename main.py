@@ -3,141 +3,97 @@ from pydantic import BaseModel
 from typing import List, Optional
 import pandas as pd
 import numpy as np
-import math
 
 app = FastAPI()
 
-# --- DATOVÉ MODELY ---
-
+# --- MODELY DAT ---
 class LogItem(BaseModel):
     time: str
     sup: float
     ret: float
 
-class DayAnalyzeRequest(BaseModel):
+class LogInput(BaseModel):
     logs: List[LogItem]
-    flow: float
-    indoor_temp: float = 22.0
-    solar_avg: float = 0.0
-    prev_meter_val: float = 0.0
-    date_str: str = ""
-    current_coeff: float = 1.05
+    flow: float = 15.0
 
-class HistoryItem(BaseModel):
+class DayHistory(BaseModel):
     date: str
     water: float
     ele: float
 
-class CoeffRequest(BaseModel):
-    history: List[HistoryItem]
-
-# --- POMOCNÁ TŘÍDA: SOLÁRNÍ FYZIKA ---
-
-class SolarPhysics:
-    def __init__(self, date_str):
-        try:
-            self.date_obj = pd.to_datetime(date_str)
-            self.day_of_year = self.date_obj.dayofyear
-        except:
-            self.day_of_year = 1
-        
-    def get_solar_factor(self):
-        """Vypočítá stínění oken dle dne v roce."""
-        rads = 2 * math.pi * (self.day_of_year + 10) / 365
-        factor = (math.cos(rads) + 1) / 2 
-        return 0.15 + (0.85 * factor)
-
-# --- ENDPOINTY ---
+class HistoryInput(BaseModel):
+    history: List[DayHistory]
 
 @app.get("/")
 def home():
-    return {"status": "Heating Brain 8.6 - FULL SYNC CORE ☀️🧠"}
+    return {"status": "Heating Brain 4.1 - Fixed AI Logic 🧠"}
 
+# --- 0. WAKE UP CALL (Aby PHP neřvalo 404) ---
 @app.get("/wake-up")
 def wake_up():
-    return {"status": "awake"}
+    return {"status": "I am awake!"}
 
+# --- 1. ANALÝZA DNE (Fyzika vody a časy) ---
 @app.post("/analyze-day")
-def analyze_day(data: DayAnalyzeRequest):
-    """Integrál vody + Solární zisky + Ghost Meter."""
+def analyze_day(data: LogInput):
     try:
-        water_kwh = 0.0
-        run_mins = 0
-        off_mins = 1440
+        if not data.logs:
+            return {"kwh": 0, "run": 0, "off": 0, "error": "No logs"}
+
+        # Načtení do Pandas
+        df = pd.DataFrame([vars(l) for l in data.logs])
+        df['time'] = pd.to_datetime(df['time'])
+        df = df.set_index('time').sort_index()
+
+        # Resampling na minuty (vyhlazení děr)
+        df_res = df.resample('1T').mean().interpolate(method='linear')
+
+        # Výpočty
+        df_res['delta'] = (df_res['sup'] - df_res['ret']).clip(lower=0)
+        df_res['is_running'] = (df_res['delta'] > 0.4) & (df_res['sup'] > 25)
         
-        if data.logs:
-            df = pd.DataFrame([item.dict() for item in data.logs])
-            df['time'] = pd.to_datetime(df['time'])
-            df = df.sort_values('time').set_index('time')
+        # Výkon (kW) = (Průtok * Delta * 4186) / 60000 ... zjednodušeně / 14.3
+        df_res['power'] = 0.0
+        df_res.loc[df_res['is_running'], 'power'] = (data.flow * df_res.loc[df_res['is_running'], 'delta']) / 14.3
 
-            # Výpočet výkonu
-            df['delta_t'] = (df['sup'] - df['ret']).clip(lower=0)
-            df['is_running'] = (df['delta_t'] > 0.4) & (df['sup'] > 25.0)
-            df['power_kw'] = data.flow * df['delta_t'] * 0.0697
-
-            # Integrace (Oprava pro NumPy 2.0+)
-            if len(df) > 1:
-                time_deltas = (df.index - df.index[0]).total_seconds() / 3600.0
-                if hasattr(np, "trapezoid"):
-                    water_kwh = np.trapezoid(df['power_kw'], x=time_deltas)
-                else:
-                    water_kwh = np.trapz(df['power_kw'], x=time_deltas)
-            
-            # Statistika minut (Oprava pro Pandas 2.2+)
-            df_res = df['is_running'].resample('1min').max().fillna(0)
-            run_mins = int(df_res.sum())
-            off_mins = 1440 - run_mins
-
-        # Solární fyzika
-        solar_gain_kwh = 0.0
-        if data.date_str and data.indoor_temp > 0:
-            physics = SolarPhysics(data.date_str)
-            shading_eff = physics.get_solar_factor()
-            # W/m2 * 24h * 12m2 oken * g-value 0.6 * factor
-            solar_gain_kwh = (data.solar_avg * 24 * 12 * 0.6 * shading_eff) / 1000.0
-            
-        # Ghost Meter - Virtuální elektroměr
-        heating_consumption = water_kwh * data.current_coeff 
-        new_meter_val = data.prev_meter_val + heating_consumption
+        total_kwh = df_res['power'].sum() / 60.0
+        run_mins = int(df_res['is_running'].sum())
+        off_mins = int(len(df_res) - run_mins)
 
         return {
-            "kwh": round(water_kwh, 3),
+            "kwh": round(total_kwh, 2),
             "run_mins": run_mins,
-            "off_mins": off_mins,
-            "new_meter_val": round(new_meter_val, 2),
-            "solar_gain": round(solar_gain_kwh, 2),
-            "used_coeff": data.current_coeff,
-            "note": "Virtual Sync Mode Active"
+            "off_mins": off_mins
         }
     except Exception as e:
-        return {"error": str(e), "kwh": 0, "new_meter_val": data.prev_meter_val}
+        return {"kwh": 0, "run": 0, "off": 0, "error": str(e)}
 
+# --- 2. VÝPOČET KOEFICIENTU (Z historie) ---
 @app.post("/calc-coeff")
-def calculate_coeff(data: CoeffRequest):
-    """Učení koeficientu z historie (Vážený průměr)."""
+def calc_coeff(data: HistoryInput):
     try:
-        if not data.history:
-            return {"coeff": 1.157, "status": "empty"}
-
-        df = pd.DataFrame([item.dict() for item in data.history])
-        valid = df[(df['ele'] > 0.1) & (df['water'] > 0.1)].copy()
-
-        if len(valid) < 3:
-            return {"coeff": 1.157, "status": "low_data"}
-
-        valid['daily_coeff'] = valid['ele'] / valid['water']
-        clean = valid[(valid['daily_coeff'] > 0.8) & (valid['daily_coeff'] < 2.5)].copy()
+        df = pd.DataFrame([vars(d) for d in data.history])
         
-        if clean.empty:
-             return {"coeff": 1.157, "status": "outliers_only"}
+        # OPRAVA: PHP už posílá denní spotřebu elektřiny (Ghost logic).
+        # Nepoužíváme .diff(), bereme hodnoty 1:1.
+        df['ele_delta'] = df['ele']
+        
+        # Filtr validních dní (kde máme vodu i elektřinu)
+        valid = df[(df['water'] > 0.5) & (df['ele_delta'] > 0.5)].copy()
+        
+        if len(valid) < 3: return {"coeff": 1.157, "msg": "Malo dat"}
 
-        # Vážený průměr dle objemu vody
-        weighted_coeff = np.average(clean['daily_coeff'], weights=clean['water'])
-
-        return {
-            "coeff": round(weighted_coeff, 4),
-            "status": "ok",
-            "sample_size": len(clean)
-        }
+        # Klouzavý součet (7 dní) pro stabilitu
+        last = valid.tail(7)
+        sum_e = last['ele_delta'].sum()
+        sum_w = last['water'].sum()
+        
+        if sum_w == 0: return {"coeff": 1.157, "msg": "Nula voda"}
+        
+        # Koeficient = Realita (Ele) / Moje Předpověď (Water)
+        calc = sum_e / sum_w
+        safe = float(np.clip(calc, 0.7, 1.5))
+        
+        return {"coeff": round(safe, 3), "msg": "OK"}
     except Exception as e:
-        return {"coeff": 1.157, "error": str(e)}
+        return {"coeff": 1.157, "msg": str(e)}
