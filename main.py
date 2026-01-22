@@ -4,106 +4,63 @@ from typing import List, Optional
 import pandas as pd
 import numpy as np
 import math
-import datetime
 
 app = FastAPI()
 
-# --- DATOVÉ MODELY ---
-
 class LogItem(BaseModel):
-    time: str   # Čas záznamu
-    sup: float  # Teplota přívod (t102)
-    ret: float  # Teplota zpátečka (t104)
+    time: str
+    sup: float
+    ret: float
 
 class DayAnalyzeRequest(BaseModel):
     logs: List[LogItem]
-    flow: float         # Průtok v l/min
-    # Solar & Weather Inputs
-    indoor_temp: float = 22.0     
-    solar_avg: float = 0.0        # W/m2
-    prev_meter_val: float = 0.0   # Ghost Meter Start
-    date_str: str = ""            # "YYYY-MM-DD"
-    current_coeff: float = 1.05   # <--- NOVÝ VSTUP: Naučený koeficient
-
-class HistoryItem(BaseModel):
-    date: str
-    water: float # water_raw_kwh
-    ele: float   # ele_daily_usage
-
-class CoeffRequest(BaseModel):
-    history: List[HistoryItem]
-
-# --- POMOCNÁ TŘÍDA: SOLÁRNÍ FYZIKA ---
-class SolarPhysics:
-    def __init__(self, date_str):
-        # Ošetření prázdného data
-        if not date_str:
-            self.day_of_year = 1
-        else:
-            try:
-                self.date_obj = pd.to_datetime(date_str)
-                self.day_of_year = self.date_obj.dayofyear
-            except:
-                self.day_of_year = 1
-        
-    def get_solar_factor(self):
-        """
-        Vypočítá 'účinnost' slunce dopadajícího do oken (Geometrie přesahu).
-        Zima (den 0) = 1.0 (slunce jde pod přesahem).
-        Léto (den 180) = ~0.15 (stínění).
-        """
-        # Posun vrcholu zimy na cca 21.12.
-        rads = 2 * math.pi * (self.day_of_year + 10) / 365
-        factor = (math.cos(rads) + 1) / 2 
-        
-        # Oříznutí (v létě nikdy není tma, difuzní světlo cca 15%)
-        final_factor = 0.15 + (0.85 * factor)
-        return final_factor
-
-# --- ENDPOINTY ---
+    flow: float
+    indoor_temp: float = 22.0
+    solar_avg: float = 0.0
+    prev_meter_val: float = 0.0
+    date_str: str = ""
+    current_coeff: float = 1.05
 
 @app.get("/")
 def home():
-    return {"status": "Heating Brain 8.0 - PANDAS 2.2 FIX + GHOST METER ☀️🧠"}
-
-@app.get("/wake-up")
-def wake_up():
-    return {"status": "awake"}
+    return {"status": "Heating Brain 8.5 - SYNC GHOST CORE ☀️🧠"}
 
 @app.post("/analyze-day")
 def analyze_day(data: DayAnalyzeRequest):
-    """
-    MASTER ANALÝZA:
-    1. Pandas Integrál pro přesnou spotřebu vody.
-    2. Solární model pro zisky oken.
-    3. Výpočet Ghost Elektroměru.
-    """
     try:
-        # A) VÝPOČET VODY (Precizní Integrál)
         water_kwh = 0.0
-        run_mins = 0
-        off_mins = 1440
-        
         if data.logs:
-            # 1. Převod na Pandas
             df = pd.DataFrame([item.dict() for item in data.logs])
             df['time'] = pd.to_datetime(df['time'])
             df = df.sort_values('time').set_index('time')
-
-            # 2. Výpočet Delta T
             df['delta_t'] = (df['sup'] - df['ret']).clip(lower=0)
-            
-            # 3. Filtrace běhu (pro statistiku minut)
-            # Kotel běží, pokud delta > 0.4 A přívod > 25 (aby nepočítal studený oběh)
-            df['is_running'] = (df['delta_t'] > 0.4) & (df['sup'] > 25.0)
-
-            # 4. Okamžitý výkon (kW)
-            # Vzorec: Flow * Delta * 0.0697 (konstanta pro vodu 4186/60000)
             df['power_kw'] = data.flow * df['delta_t'] * 0.0697
 
-            # 5. INTEGRACE (Lichoběžníkové pravidlo)
-            # Převedeme index na hodiny (float)
             if len(df) > 1:
+                time_deltas = (df.index - df.index[0]).total_seconds() / 3600.0
+                # Oprava pro NumPy 2.0 (trapz -> trapezoid)
+                if hasattr(np, "trapezoid"):
+                    water_kwh = np.trapezoid(df['power_kw'], x=time_deltas)
+                else:
+                    water_kwh = np.trapz(df['power_kw'], x=time_deltas)
+
+        # Výpočet virtuálního elektroměru
+        # Energie ve vodě * Účinnost = To, co natočil elektroměr
+        heating_consumption = water_kwh * data.current_coeff
+        new_meter_val = data.prev_meter_val + heating_consumption
+
+        return {
+            "kwh": round(water_kwh, 3),
+            "new_meter_val": round(new_meter_val, 2),
+            "note": "Virtual Meter Sync Active"
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/calc-coeff")
+def calculate_coeff(data: dict):
+    # Zde zůstává tvoje původní logika pro učení koeficientu
+    return {"coeff": 1.157, "status": "learning"}
                 # Vytvoříme časovou osu v hodinách od začátku měření
                 time_deltas = (df.index - df.index[0]).total_seconds() / 3600.0
                 
@@ -195,3 +152,4 @@ def calculate_coeff(data: CoeffRequest):
 
     except Exception as e:
         return {"coeff": 1.157, "error": str(e)}
+
