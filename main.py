@@ -26,9 +26,9 @@ class HistoryInput(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "Heating Brain 4.1 - Fixed AI Logic 🧠"}
+    return {"status": "Heating Brain 4.3 - Pandas Fix 🐼"}
 
-# --- 0. WAKE UP CALL (Aby PHP neřvalo 404) ---
+# --- 0. WAKE UP CALL ---
 @app.get("/wake-up")
 def wake_up():
     return {"status": "I am awake!"}
@@ -45,12 +45,16 @@ def analyze_day(data: LogInput):
         df['time'] = pd.to_datetime(df['time'])
         df = df.set_index('time').sort_index()
 
-        # Resampling na minuty (vyhlazení děr)
-        df_res = df.resample('1T').mean().interpolate(method='linear')
+        # Resampling na minuty (OPRAVA: '1T' -> '1min')
+        df_res = df.resample('1min').mean().interpolate(method='linear')
 
         # Výpočty
         df_res['delta'] = (df_res['sup'] - df_res['ret']).clip(lower=0)
-        df_res['is_running'] = (df_res['delta'] > 0.4) & (df_res['sup'] > 20)
+        
+        # LOGIKA BĚHU:
+        # Delta > 0.4 (Fyzikální přenos tepla)
+        # Sup > 20.0 (Sníženo z 25 kvůli nízkoteplotnímu provozu)
+        df_res['is_running'] = (df_res['delta'] > 0.4) & (df_res['sup'] > 20.0)
         
         # Výkon (kW) = (Průtok * Delta * 4186) / 60000 ... zjednodušeně / 14.3
         df_res['power'] = 0.0
@@ -74,11 +78,11 @@ def calc_coeff(data: HistoryInput):
     try:
         df = pd.DataFrame([vars(d) for d in data.history])
         
-        # OPRAVA: PHP už posílá denní spotřebu elektřiny (Ghost logic).
-        # Nepoužíváme .diff(), bereme hodnoty 1:1.
+        # PHP posílá hotovou denní spotřebu (rozpočítanou z "Smart Delta").
+        # Takže nepočítáme .diff(), ale bereme hodnotu napřímo.
         df['ele_delta'] = df['ele']
         
-        # Filtr validních dní (kde máme vodu i elektřinu)
+        # Filtr validních dní
         valid = df[(df['water'] > 0.5) & (df['ele_delta'] > 0.5)].copy()
         
         if len(valid) < 3: return {"coeff": 1.157, "msg": "Malo dat"}
@@ -90,11 +94,10 @@ def calc_coeff(data: HistoryInput):
         
         if sum_w == 0: return {"coeff": 1.157, "msg": "Nula voda"}
         
-        # Koeficient = Realita (Ele) / Moje Předpověď (Water)
+        # Koeficient = Realita (Ele) / Minulý Odhad (Water)
         calc = sum_e / sum_w
         safe = float(np.clip(calc, 0.7, 1.5))
         
         return {"coeff": round(safe, 3), "msg": "OK"}
     except Exception as e:
         return {"coeff": 1.157, "msg": str(e)}
-
