@@ -24,9 +24,18 @@ class DayHistory(BaseModel):
 class HistoryInput(BaseModel):
     history: List[DayHistory]
 
+# --- NOVÉ MODELY PRO SMART DELTA ---
+class WaterLogItem(BaseModel):
+    date: str
+    water_kwh: float
+
+class DistributeRequest(BaseModel):
+    total_ele_delta: float
+    daily_water_logs: List[WaterLogItem]
+
 @app.get("/")
 def home():
-    return {"status": "Heating Brain 4.3 - Pandas Fix 🐼"}
+    return {"status": "Heating Brain 4.4 - Full Logic 🧠"}
 
 # --- 0. WAKE UP CALL ---
 @app.get("/wake-up")
@@ -101,3 +110,48 @@ def calc_coeff(data: HistoryInput):
         return {"coeff": round(safe, 3), "msg": "OK"}
     except Exception as e:
         return {"coeff": 1.157, "msg": str(e)}
+
+# --- 3. SMART DELTA (Rozpočítání elektřiny) ---
+# Toto je ta nová logika, kterou jsi chtěl přidat.
+@app.post("/smart-distribute")
+def smart_distribute(data: DistributeRequest):
+    try:
+        # Převedeme vstupní data
+        daily_water_logs = [vars(item) for item in data.daily_water_logs]
+        total_ele_delta = data.total_ele_delta
+        
+        # 1. Sečteme celkovou energii ve vodě za dané období
+        total_water = sum(day['water_kwh'] for day in daily_water_logs)
+        
+        results = []
+        
+        # Ošetření dělení nulou (kdyby kotel vůbec neběžel)
+        if total_water == 0:
+            # Rozdělíme rovnoměrně
+            count = len(daily_water_logs)
+            if count > 0:
+                even_share = total_ele_delta / count
+                for day in daily_water_logs:
+                    results.append({
+                        'date': day['date'],
+                        'ele_kwh': round(even_share, 2)
+                    })
+            return {"results": results}
+
+        # 2. Rozpočítání podle váhy (Trojčlenka)
+        for day in daily_water_logs:
+            if day['water_kwh'] > 0:
+                # Vzorec: (Voda Dne / Voda Celkem) * Elektřina Celkem
+                ratio = day['water_kwh'] / total_water
+                daily_ele = total_ele_delta * ratio
+            else:
+                daily_ele = 0.0
+                
+            results.append({
+                'date': day['date'],
+                'ele_kwh': round(daily_ele, 2)
+            })
+            
+        return {"results": results}
+    except Exception as e:
+        return {"results": [], "error": str(e)}
