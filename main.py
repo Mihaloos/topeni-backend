@@ -127,9 +127,11 @@ def calc_range_coeffs(data: RangeCoeffRequest):
         # 1. Globální koeficient (posledních 30 dnů, pro stabilitu)
         last = valid.tail(30)
         global_coeff = float(np.clip(last['ele'].sum() / last['water'].sum(), 0.7, 1.5))
-        # 2. Skutečný koeficient per den
+        # 2. Skutečný koeficient per den + Filtr Odléhavých hodnot (Outliers)
+        # Pokud je koeficient extrémní (výpadek dat, chyba měření), vyřadíme ho z analýzy rozmezí.
         valid = valid.copy()
         valid['real_coeff'] = valid['ele'] / valid['water']
+        valid = valid[(valid['real_coeff'] >= 0.7) & (valid['real_coeff'] <= 1.8)].copy()
         # 3. Hranice rozmezí
         if data.range_breaks and len(data.range_breaks) >= 2:
             breaks = sorted(data.range_breaks)
