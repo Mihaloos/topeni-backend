@@ -134,17 +134,18 @@ def calc_range_coeffs(data: RangeCoeffRequest):
         if data.range_breaks and len(data.range_breaks) >= 2:
             breaks = sorted(data.range_breaks)
         else:
-            # Statisticky z dat: kvantily Q25, Q50, Q75 zaokrouhlené na 5 kWh
-            water_arr = valid['water'].values
-            q = [float(np.quantile(water_arr, p)) for p in [0.25, 0.5, 0.75]]
-            def round5(x): return max(5.0, round(x / 5) * 5.0)
-            breaks = sorted(set([0.0] + [round5(v) for v in q]))
-            # Minimum 5 kWh mezera
-            final_breaks = [breaks[0]]
-            for b in breaks[1:]:
-                if b - final_breaks[-1] >= 5:
-                    final_breaks.append(b)
-            breaks = final_breaks
+            # Pevné kroky po 10 kWh – nejlépe vystihují rozdíly v účinnosti (0-10, 10-20, 20-30...)
+            max_water = float(valid['water'].max())
+            
+            # Vygenerujeme body 0, 10, 20, 30... až do maxima (oříznuto na rozumný strop)
+            strop = min(100.0, ((max_water // 10) + 1) * 10)
+            breaks = [float(x) for x in range(0, int(strop), 10)]
+            
+            # Pokud je v posledním rozmezí příliš málo dat, spojíme ho s předchozím (stabilitu)
+            if len(breaks) > 2:
+                last_range_data = valid[valid['water'] >= breaks[-1]]
+                if len(last_range_data) < 3:
+                     breaks.pop() # Odstraníme poslední break, aby se spojil s předchozím
         # 4. Výpočet range_coeff per rozmezí
         def get_label(w, brks):
             for i in range(len(brks) - 1):
