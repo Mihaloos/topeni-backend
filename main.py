@@ -76,7 +76,8 @@ def analyze_day(data: LogInput):
 @app.post("/calc-coeff")
 def calc_coeff(data: HistoryInput):
     try:
-        df = pd.DataFrame([vars(d) for d in data.history])
+        # Převedeme Pydantic modely na dicty pro Pandas
+        df = pd.DataFrame([d.dict() for d in data.history])
         
         # PHP posílá hotovou denní spotřebu (rozpočítanou z "Smart Delta").
         # Takže nepočítáme .diff(), ale bereme hodnotu napřímo.
@@ -148,7 +149,10 @@ def calc_range_coeffs(data: RangeCoeffRequest):
         def get_label(w, brks):
             for i in range(len(brks) - 1):
                 if brks[i] <= w < brks[i + 1]:
-                    return f"{int(brks[i])}-{int(brks[i+1])}"
+                    lo, hi = brks[i], brks[i + 1]
+                    if hi == float('inf'):
+                        return f"{int(lo)}+"
+                    return f"{int(lo)}-{int(hi)}"
             return f"{int(brks[-1])}+"
         breaks_ext = breaks + [float('inf')]
         valid['range'] = valid['water'].apply(lambda w: get_label(w, breaks_ext))
@@ -168,7 +172,10 @@ def calc_range_coeffs(data: RangeCoeffRequest):
         ordered_coeffs = {}
         for i in range(len(breaks_ext) - 1):
             lo, hi = breaks_ext[i], breaks_ext[i + 1]
-            lbl = f"{int(lo)}-{int(hi)}" if hi != float('inf') else f"{int(lo)}+"
+            if hi == float('inf'):
+                lbl = f"{int(lo)}+"
+            else:
+                lbl = f"{int(lo)}-{int(hi)}"
             ordered_coeffs[lbl] = range_coeffs.get(lbl, 1.0)
         return {
             "global_coeff":  round(global_coeff, 4),
@@ -179,11 +186,14 @@ def calc_range_coeffs(data: RangeCoeffRequest):
             "msg":           "OK"
         }
     except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
         return {
             "global_coeff": 1.157,
             "range_breaks": [0, 15, 30, 45],
             "range_coeffs": {"0-15": 1.0, "15-30": 1.0, "30-45": 1.0, "45+": 1.0},
-            "msg": str(e)
+            "msg": f"Python Error: {str(e)}",
+            "debug": error_detail
         }
 # --- 4. SMART DELTA (Rozpočítání elektřiny) ---
 # Toto je ta nová logika, kterou jsi chtěl přidat.
